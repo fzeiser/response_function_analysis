@@ -3,7 +3,9 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d
+from scipy.special import erfc
 from tabulate import tabulate
+from typing import Dict, Tuple, Optional, Callable
 
 import fnmatch
 import os
@@ -553,3 +555,311 @@ def smooth(x, window_len, window='hanning', trim=True):
         return y[int(window_len / 2 - 1):upper]
     else:
         return y
+
+
+class PeakFitter:
+    def __init__(self, x: np.ndarray, y: np.ndarray,
+                 yerr: Optional[np.ndarray] = None):
+        self.x = x.copy()
+        self.y = y.copy()
+
+        if yerr is None:
+            self.yerr = None
+        else:
+            self.yerr = yerr.copy()
+            self.yerr[self.y == 0] = np.inf
+
+        self._xfit = None  # make it easier to retrieve current fit x values
+
+    def fitGausBg(self, pre_region: Tuple[float, float],
+                  post_region: Tuple[float, float]) -> Dict[str, float]:
+        """Fit a gamma peak with a gaussian on top of a const. bg
+
+        Args:
+            pre_region: Energy region with linear spectra on the left
+            side of the peak
+            post_region: Energy region with linear spectra on the right
+            side of the peak
+
+        Returns:
+            popt, cov: optimal parameters and covariance
+        """
+        x = self.x
+        y = self.y
+
+        pre_slice, peak_slice, post_slice, fit_slice = \
+            self.get_fit_slices(pre_region, post_region)
+
+        # pre_spec = y[pre_slice]
+        peak_spec = y[peak_slice]
+        # post_spec = y[post_slice]
+
+        # Estimate the mean, std and constant
+        peak_mean = np.sum(x[peak_slice]*peak_spec)/np.sum(peak_spec)
+        peak_var = np.sum(peak_spec*x[peak_slice]**2)/np.sum(peak_spec)
+        peak_std = np.sqrt(peak_var - peak_mean**2)
+
+        # We estimate the gauss constant from the height found at the mean
+        peak_const = np.max(peak_spec) / self.gaus(peak_mean, 1., peak_mean,
+                                                   peak_std)
+
+        # pol_estimate = np.polyfit(np.append(x[pre_slice], x[post_slice]),
+        #                           np.append(y[pre_slice], y[post_slice]), 0)
+
+        # Calculate the curve fitting
+        initial_guess = [peak_const, peak_mean, peak_std,
+                         y[post_slice].mean()]
+        yerr = self.yerr[fit_slice] if self.yerr is not None else None
+        popt, cov = curve_fit(self.gaus_bg, x[fit_slice], y[fit_slice],
+                              p0=initial_guess, sigma=yerr)
+        return popt, cov
+
+    def fitDoubleGausBg(self, pre_region: Tuple[float, float],
+                        post_region: Tuple[float, float],
+                        p0_E: Tuple[float, float],
+                        p0_sigma=np.array([10., 10.]),
+                        ) -> Dict[str, float]:
+        """Fit a two gaussians on top of a const. bg
+
+        Args:
+            pre_region: Energy region with linear spectra on the left
+            side of the peak
+            post_region: Energy region with linear spectra on the right
+            side of the peak
+            p0_E: Initial guess for peaks
+            p0_sigma: Initial guess for sigma
+
+        Returns:
+            popt, cov: optimal parameters and covariance
+        """
+        x = self.x
+        y = self.y
+
+        pre_slice, peak_slice, post_slice, fit_slice = \
+            self.get_fit_slices(pre_region, post_region)
+
+        peak_spec = y[peak_slice]
+
+        # We estimate the constant from the height found at the mean
+        p0_const = np.max(peak_spec) / self.gaus(p0_E[0], 1., p0_E[0],
+                                                 p0_sigma[0])
+        p0_const2 = np.max(peak_spec) / self.gaus(p0_E[1], 1., p0_E[1],
+                                                  p0_sigma[1])
+
+        # pol_estimate = np.polyfit(np.append(x[pre_slice], x[post_slice]),
+        #                           np.append(y[pre_slice], y[post_slice]), 0)
+
+        # Calculate the curve fitting
+        initial_guess = [p0_const, p0_E[0], p0_sigma[0],
+                         p0_const2, p0_E[1], p0_sigma[1],
+                         y[post_slice].mean()]
+        yerr = self.yerr[fit_slice] if self.yerr is not None else None
+        popt, cov = curve_fit(self.doublegaus_bg, x[fit_slice], y[fit_slice],
+                              p0=initial_guess, sigma=yerr)
+        return popt, cov
+
+    def fitGausBgStep(self, pre_region: Tuple[float, float],
+                      post_region: Tuple[float, float]) -> Dict[str, float]:
+        """Fit a gamma peak with a gaussian on top of a const. bg + step fct
+
+        Args:
+            pre_region: Energy region with linear spectra on the left
+            side of the peak
+            post_region: Energy region with linear spectra on the right
+            side of the peak
+        """
+        x = self.x
+        y = self.y
+
+        pre_slice, peak_slice, post_slice, fit_slice = \
+            self.get_fit_slices(pre_region, post_region)
+
+        popt_gaus, _ = self.fitGausBg(pre_region, post_region)
+        # Calculate the curve fitting
+        p0_step_constant = 1000
+        initial_guess = [*popt_gaus, p0_step_constant]
+        yerr = self.yerr[fit_slice] if self.yerr is not None else None
+        popt, cov = curve_fit(self.gaus_bg_step, x[fit_slice], y[fit_slice],
+                              p0=initial_guess, sigma=yerr,
+                              # bounds=[0, np.inf]
+                              )
+        return popt, cov
+
+    def fitGausStep(self, pre_region: Tuple[float, float],
+                    post_region: Tuple[float, float]) -> Dict[str, float]:
+        """Fit a gamma peak with a gaussian on top and step fct
+
+        Args:
+            pre_region: Energy region with linear spectra on the left
+            side of the peak
+            post_region: Energy region with linear spectra on the right
+            side of the peak
+        """
+        x = self.x
+        y = self.y
+
+        pre_slice, peak_slice, post_slice, fit_slice = \
+            self.get_fit_slices(pre_region, post_region)
+
+        popt_gaus, _ = self.fitGausBg(pre_region, post_region)
+        # Calculate the curve fitting
+        p0_step_constant = 1000
+        initial_guess = [*popt_gaus[:-1], p0_step_constant]
+        yerr = self.yerr[fit_slice] if self.yerr is not None else None
+        popt, cov = curve_fit(self.gaus_step, x[fit_slice], y[fit_slice],
+                              p0=initial_guess, sigma=yerr,
+                              # bounds=[0, np.inf]
+                              )
+        return popt, cov
+
+    def fitDoubleGausBgStep(self, pre_region: Tuple[float, float],
+                            post_region: Tuple[float, float],
+                            p0_E: Tuple[float, float],
+                            p0_sigma=np.array([10., 10.]),
+                            ) -> Dict[str, float]:
+        """Fit two gaussians on top of a const. bg + step fct
+
+        Args:
+            pre_region: Energy region with linear spectra on the left
+            side of the peak
+            post_region: Energy region with linear spectra on the right
+            side of the peak
+            p0_E: Initial guess for peaks
+            p0_sigma: Initial guess for sigma
+        """
+        x = self.x
+        y = self.y
+
+        pre_slice, peak_slice, post_slice, fit_slice = \
+            self.get_fit_slices(pre_region, post_region)
+
+        popt_gaus, _ = self.fitDoubleGausBg(pre_region, post_region,
+                                            p0_E, p0_sigma)
+        # Calculate the curve fitting
+        p0_step_constant = 0.1
+        initial_guess = [*popt_gaus, p0_step_constant]
+        yerr = self.yerr[fit_slice] if self.yerr is not None else None
+
+        bounds = [[0, np.inf] for i in initial_guess]
+
+        popt, cov = curve_fit(self.doublegaus_bg_step,
+                              x[fit_slice], y[fit_slice],
+                              p0=initial_guess, sigma=yerr,
+                              # bounds=[0, np.inf]
+                              )
+        return popt, cov
+
+    def fitGausLinBgStep(self, pre_region: Tuple[float, float],
+                         post_region: Tuple[float, float]) -> Dict[str, float]:
+        """Fit a gamma peak with a gaussian on top of a linear bg + step fct
+
+        Args:
+            pre_region: Energy region with linear spectra on the left
+            side of the peak
+            post_region: Energy region with linear spectra on the right
+            side of the peak
+        """
+        x = self.x
+        y = self.y
+
+        pre_slice, peak_slice, post_slice, fit_slice = \
+            self.get_fit_slices(pre_region, post_region)
+
+        popt_gaus, _ = self.fitGausBgStep(pre_region, post_region)
+        # Calculate the curve fitting
+        pol_estimate = np.polyfit(np.append(x[pre_slice], x[post_slice]),
+                                  np.append(y[pre_slice], y[post_slice]), 1)[0]
+
+        initial_guess = [*popt_gaus[:-1], pol_estimate, popt_gaus[-1]]
+        yerr = self.yerr[fit_slice] if self.yerr is not None else None
+        popt, cov = curve_fit(self.gaus_linbg_step, x[fit_slice], y[fit_slice],
+                              p0=initial_guess, sigma=yerr,
+                              # bounds=[0, np.inf]
+                              )
+        return popt, cov
+
+    def get_fit_slices(self, pre_region: Tuple[float, float],
+                       post_region: Tuple[float, float]):
+        """ Extract fit slices from tuple of Emin/Emac before / after peak
+
+        Args:
+            pre_region: Energy region with linear spectra on the left
+            side of the peak
+            post_region: Energy region with linear spectra on the right
+            side of the peak
+
+        Returns:
+            pre_slice, peak_slice, post_slice, fit_slice
+        """
+        x = self.x
+
+        def ix(x0):
+            return (np.abs(x-x0)).argmin()
+
+        pre_slice = slice(ix(pre_region[0]), ix(pre_region[1])+1)
+        peak_slice = slice(ix(pre_region[1])+1, ix(post_region[0]))
+        post_slice = slice(ix(post_region[0]), ix(post_region[1])+1)
+        fit_slice = slice(ix(pre_region[0]), ix(post_region[1])+1)
+
+        self._xfit = x[fit_slice]
+        return pre_slice, peak_slice, post_slice, fit_slice
+
+    @staticmethod
+    def gaus(x, const, mean, std):
+        """ Gaussian """
+        return const/(std*np.sqrt(2*np.pi)) * np.exp(-0.5*((x-mean)/std)**2)
+
+    @staticmethod
+    def smoothstep(x, const, mean, std):
+        """ Smooth step """
+        return const * erfc((x - mean) / (np.sqrt(2)*std))
+
+    @staticmethod
+    def gaus_bg(x, gaus_const, mean, std, offsett):
+        """ Gauss and constant background """
+        return PeakFitter.gaus(x, gaus_const, mean, std) + offsett
+
+    @staticmethod
+    def doublegaus_bg(x, gaus_const, mean, std,
+                      gaus_const2, mean2, std2, offsett):
+        """ Gauss and constant background """
+        return (PeakFitter.gaus(x, gaus_const, mean, std)
+                + PeakFitter.gaus(x, gaus_const2, mean2, std2) + offsett)
+
+    @staticmethod
+    def gaus_linbg(x, gaus_const, mean, std, offsett, bgslope):
+        """ Gauss and linear background """
+        return PeakFitter.gaus(x, gaus_const, mean, std) + x*bgslope + offsett
+
+    @staticmethod
+    def gaus_bg_step(x, gaus_const, mean, std, offsett, step_const):
+        """ Gauss and constant background and step function """
+        gaus_bg = PeakFitter.gaus_bg(x, gaus_const, mean, std, offsett)
+        step = PeakFitter.smoothstep(x, step_const, mean, std)
+        return gaus_bg + step
+
+    @staticmethod
+    def gaus_step(x, gaus_const, mean, std, step_const):
+        """ Gauss and step function """
+        gaus = PeakFitter.gaus(x, gaus_const, mean, std)
+        step = PeakFitter.smoothstep(x, step_const, mean, std)
+        return gaus + step
+
+    @staticmethod
+    def doublegaus_bg_step(x, gaus_const, mean, std, gaus_const2, mean2, std2,
+                           offsett, step_const):
+        """ Gauss and constant background and step function """
+        doublegaus_bg = PeakFitter.doublegaus_bg(x, gaus_const, mean, std,
+                                                 gaus_const2, mean2, std2,
+                                                 offsett)
+        step = PeakFitter.smoothstep(x, step_const, mean, std)
+        return doublegaus_bg + step
+
+    @staticmethod
+    def gaus_linbg_step(x, gaus_const, mean, std, offsett, bgslope,
+                        step_const):
+        """ Gauss and linaer background and step function """
+        gaus_linbg = PeakFitter.gaus_linbg(x, gaus_const, mean, std, offsett,
+                                           bgslope)
+        step = PeakFitter.smoothstep(x, step_const, mean, std)
+        return gaus_linbg + step

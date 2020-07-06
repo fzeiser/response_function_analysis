@@ -77,7 +77,6 @@ def get_fom(fnamesim,
         sim = Vector(path=fname_sim)
         sim = np.c_[sim.E*1000, sim.values]
 
-
         sc.get_data(exp.copy(), bg.copy(), bg_ratio, sim, fwhm_pars)
 
         if manual_ratio is None:
@@ -94,7 +93,9 @@ def get_fom(fnamesim,
         grid_points[i] = int(re.search(r"grid_(-*\d*)_", fname_sim)[1])
 
         if do_plot:
-            fig, _ = sc.plots(title=fname_sim, xmax=xmax_plot)
+            fig, (ax1, ax2) = sc.plots(title=fname_sim, xmax=xmax_plot)
+
+        ax1.set_ylim(1e3, 1e8)
         fig.savefig(f"figs_inbeam/{fnamesim}_{grid_points[i]:.0f}.png")
         plt.show()
         plt.close(fig)
@@ -102,7 +103,7 @@ def get_fom(fnamesim,
 
 def arr_from_py(fname, Emin, Emax, remove_negative=False):
     mat = Matrix(path=fname)
-    mat.plot(vmin=1, vmax=1e4)
+    # mat.plot(vmin=1, vmax=1e4)
     if remove_negative:
         mat.remove_negative()
     values, E = mat.projection("Eg", Emin, Emax)
@@ -211,7 +212,7 @@ if __name__ == "__main__":
     #         Efit_low, Efit_high,
     #         do_plot=True, printout=True, xmax_plot=3000)
 
-
+    """
     # 28Si -- Ex = ~4.6 KeV
     fname_exp = "exp/inbeam/si-run1/28si/alfna.m"
     fname_bg = "exp/inbeam/si-run1/28si/alfna_bg.m"
@@ -243,10 +244,106 @@ if __name__ == "__main__":
 
     # ax.set_yscale("log")
     # ax.legend()
+
+    from scipy.stats import norm
+    from scipy.optimize import curve_fit
+
+    def fitnorm(x, c, loc, scale, offset):
+        return c * norm.pdf(x, loc, scale) + offset
+
+    iE1 = np.abs(exp[:, 0] - 1720).argmin()
+    iE2 = np.abs(exp[:, 0] - 1890).argmin()
+    xfit = exp[iE1:iE2+1, 0]
+    yfit = exp[iE1:iE2+1, 1]
+    p0 = (20*np.max(yfit), 1778, 20, 400)
+    bounds = (0, [np.inf, np.inf, np.inf, 410])
+
+    popt, pcov = curve_fit(fitnorm, xfit, yfit, p0=p0,
+                           bounds=bounds)
+    ax.plot(xfit, fitnorm(xfit, *popt))
+
+    iE1 = np.abs(exp[:, 0] - (2837-60)).argmin()
+    iE2 = np.abs(exp[:, 0] - (2837+140)).argmin()
+    xfit1 = exp[iE1:iE2+1, 0]
+    yfit1 = exp[iE1:iE2+1, 1]
+    p0 = (20*np.max(yfit1), 2837, 20, 5)
+
+    bounds = (0, [np.inf, np.inf, np.inf, 10])
+
+    popt1, pcov1 = curve_fit(fitnorm, xfit1, yfit1, p0=p0, bounds=bounds)
+    ax.plot(xfit1, fitnorm(xfit1, *popt1))
+    ax.set_yscale("log")
+
+    fig, ax = plt.subplots()
+    ax.plot(xfit, yfit-fitnorm(xfit, *popt))
+
+    fig, ax = plt.subplots()
+    ax.plot(xfit1, yfit1-fitnorm(xfit1, *popt1))
+
     plt.show()
 
     get_fom("4617",
             exp, bg, fwhm_pars, bg_ratio,
             Efit_low, Efit_high,
             do_plot=True, printout=True, xmax_plot=4800)
+    """
 
+    # # 12C -- Ex = 4.4 MeV
+    fname_exp = "exp/inbeam/12C/h_bg_subtracted.m"
+    # fname_bg = "exp/inbeam/si-run1/28si/alfna_bg.m"
+    Efit_low = 4440-80
+    Efit_high = 4440+35
+    Ecompare_low = 50
+    Ecompare_high = 1000
+    bg_ratio = 0
+
+    # especially 21, 26, 30 have "double peaks"
+    # slight impresicion: at the moment not removed from simulations
+    # but spectra there are almost the same for each detector
+
+    good_dets = np.arange(30)
+
+    # bad_dets = [3, 5, 7, 8, 18, 21, 26, 30]
+    # bad_dets.sort()
+    # bad_dets = np.array(bad_dets)
+    # good_dets = \
+    #     good_dets[bad_dets[np.searchsorted(bad_dets, good_dets)] != good_dets]
+
+    exp_mat = Matrix(path=fname_exp)
+    # exp_mat.plot()
+
+    exp = np.zeros((len(exp_mat.Eg), 2))
+    exp[:, 0] = exp_mat.Eg
+    exp[:, 1] = exp_mat.values[good_dets, :].sum(axis=0)
+    exp[:, 1][exp[:, 1] < 0] = 0  # remove negative counts for comparison
+
+    exp_all = np.zeros((len(exp_mat.Eg), 2))
+    exp_all[:, 0] = exp_mat.Eg
+    exp_all[:, 1] = exp_mat.values[:, :].sum(axis=0)
+
+    # dummy bg
+    bg = exp.copy()
+
+    fig, ax = plt.subplots()
+    ax.plot(exp[:, 0], exp[:, 1], label="exp")
+    ax.plot(exp_all[:, 0], exp_all[:, 1], label="all detectors")
+    # ax.plot(bg[:, 0], bg[:, 1], label="bg")
+
+    # fig, ax = plt.subplots()
+    # ax.plot(exp[:, 0], exp[:, 1], label="exp")
+    # ax.plot(bg[:, 0], bg[:, 1], label="bg")
+
+    # exp = arr_from_py(fname_exp, 1700-100, 1700+100, remove_negative=True)
+    # ax.plot(exp[:, 0], exp[:, 1], label="exp2")
+
+    # exp = arr_from_py(fname_exp, 1700-150, 1700+150, remove_negative=True)
+    # ax.plot(exp[:, 0], exp[:, 1], label="exp3")
+
+    # ax.set_yscale("log")
+    # ax.legend()
+    # plt.show()
+
+    get_fom("4440",
+            exp, bg, fwhm_pars, bg_ratio,
+            Efit_low, Efit_high,
+            do_plot=True, printout=True, xmax_plot=5000)

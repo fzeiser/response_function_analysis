@@ -7,13 +7,15 @@ import re
 from tqdm import tqdm
 from datetime import datetime
 
-from uncertainties import unumpy
+from uncertainties import unumpy, ufloat, correlated_values
 import sys
 
 import pandas as pd
 # sys.path.append("../exp")
 
-from compare import SpectrumComparison, fFWHM
+from compare import SpectrumComparison, fFWHM, PeakFitter
+
+from scipy.optimize import curve_fit
 
 def save_coords_from_click(fig, fname="coords.txt"):
     try:
@@ -46,7 +48,7 @@ def get_fom(fnisotope,
             measure_time_exp, measure_time_bg, idets,
             Efit_low, Efit_high,
             do_plot=True, printout=False,
-            manual_ratio=None):
+            manual_ratio=None, fitpeaks=None):
     """ get figure of merrit
 
     fnisotope: str, like "60Co", or "152Eu"
@@ -60,79 +62,45 @@ def get_fom(fnisotope,
     foms = np.zeros((len(fname_sims), 3))
 
     for i, fname_sim in enumerate(tqdm(fname_sims)):
-        if i > 3:
+        if i > 4:
             break
         if printout:
             print("fitting: ", fname_sim)
+
+        grid_point = int(re.search(r"grid_(-\d*)_", fname_sim).groups()[0])
+        grid_points[i] = grid_point
+
         sc = SpectrumComparison()
         sc.get_data(fname_sim, fname_exp, fname_bg, fwhm_pars,
                     measure_time_exp, measure_time_bg, idet=idets,
                     recalibrate=True)
+
         if manual_ratio is None:
             sc.scale_sim_to_exp_area(Efit_low, Efit_high)
         else:
             sc.scale_sim_to_exp_manual(manual_ratio)
 
-        ncounts_Elims = np.zeros((len(Elimits), 2))
-        for i, (E1, E2) in enumerate(Elimits):
-            ncounts_Elims[i, 0] = sc.get_area(sc.exp, E1, E2)
-            sim_scaled = np.c_[sc.xsim, unumpy.nominal_values(sc.uysim_scaled)]
-            ncounts_Elims[i, 1] = sc.get_area(sim_scaled, E1, E2)
+        fit_peaks(fitpeaks, fnisotope, sc, grid_point)
 
+        # compare_plain_counts(sc, manual_ratio, Elimits)
+        # difference_total(sc)
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
-        counts_exp = unumpy.uarray(ncounts_Elims[:, 0],
-                                   np.sqrt(ncounts_Elims[:, 0]))
-        counts_sim = unumpy.uarray(ncounts_Elims[:, 1]/manual_ratio,
-                                   np.sqrt(ncounts_Elims[:, 1])/manual_ratio)
-        counts_sim *= manual_ratio
-        counts_sim *= 5  # *5 due to binwidth
-        diff = (counts_exp-counts_sim)/counts_exp * 100
-        ax1.errorbar(Elimits.mean(axis=1), unumpy.nominal_values(counts_exp),
-                     yerr=unumpy.std_devs(counts_exp), fmt="o")
-        ax1.errorbar(Elimits.mean(axis=1), unumpy.nominal_values(counts_sim),
-                     yerr=unumpy.std_devs(counts_sim), fmt="x")
-        ax2.errorbar(Elimits.mean(axis=1), unumpy.nominal_values(diff),
-                     yerr=unumpy.std_devs(diff), fmt="x")
-
-        # # syst. error (scaling from activities)
-        # counts_exp_low = ncounts_Elims[:, 0] * 0.97
-        # counts_exp_high = ncounts_Elims[:, 0] * 1.03
-        # diff_low = (counts_exp_low-counts_sim)/counts_exp_low *100
-        # diff_high = (counts_exp_high-counts_sim)/counts_exp_high *100
-        # ax1.plot(Elimits.mean(axis=1), counts_exp_low, "o", c="b", ms=1, alpha=0.8)
-        # ax2.plot(Elimits.mean(axis=1), diff_low, "x", c="b", ms=1, alpha=0.8)
-        # ax1.plot(Elimits.mean(axis=1), counts_exp_high, "o", c="b", ms=1, alpha=0.8)
-        # ax2.plot(Elimits.mean(axis=1), diff_high, "x", c="b", ms=1, alpha=0.8)
-        ax2.axhline(0, c="k", ls="--")
-        ax2.set_ylim(-20, 20)
-
-
-        tot_exp = sc.get_area(sc.exp, 100, 1300)
-        tot_sim = sc.get_area(sim_scaled, 100, 1300)
-        tot_sim *= 5 # 5 due to binwitdth
-        tot_diff = (tot_exp-tot_sim)/tot_exp * 100
-        print(f"Tot diff Elims1 [%]: {tot_diff:.2f}")
-
-        tot_exp = sc.get_area(sc.exp, 50, 200)
-        tot_sim = sc.get_area(sim_scaled, 50, 200)
-        tot_sim *= 5 # 5 due to binwitdth
-        tot_diff = (tot_exp-tot_sim)/tot_exp * 100
-        print(f"Tot diff Elims2 [%]: {tot_diff:.2f}")
-
-        plt.show()
-
-        chi2 = sc.get_chi2()
+        sc.get_chi2()
         rel_diff, rel_diff_smooth = sc.get_rel_diff(smooth_window_keV=20)
 
         foms[i, :] = sc.fom(Ecompare_low, Ecompare_high, printout=False)
-        # print(sc.fom(Ecompare_low, Ecompare_high))
-        grid_points[i] = int(re.search(r"grid_(-*\d*)_", fname_sim)[1])
+
         if do_plot:
-            fig, _ = sc.plots(title=fname_sim, xmax=1500)
-        fig.savefig(f"figs/{fnisotope}_{grid_points[i]:.0f}.png")
-        plt.show()
-        plt.close(fig)
+            fig, (ax1, ax2) = sc.plots(title=fname_sim, xmax=1600)
+
+            fig.savefig(f"figs/{fnisotope}_{grid_point:.0f}.png")
+
+            add_peaks_plot(ax1, fnisotope, fitpeaks, grid_point)
+
+            ax1.legend()
+            fig.savefig(f"figs/{fnisotope}_{grid_point:.0f}_fits.png")
+            # plt.show()
+            plt.close(fig)
 
     if printout:
         ltab = [[name, *foms[i, :]] for i, name in enumerate(fname_sims)]
@@ -152,6 +120,127 @@ def get_fom(fnisotope,
     return df
 
 
+def fit_peaks(fitpeaks, fnisotope, sc, grid_point):
+    """ Fit peaks by different functions
+
+    Note: changes dictrionary fitpeaks inplace!
+    """
+    fitpeak = fitpeaks[fnisotope] if fitpeaks is not None else {}
+    for peak, specs in fitpeak.items():
+        pf = PeakFitter(sc.exp[:, 0], sc.exp[:, 1],
+                        unumpy.std_devs(sc.uyexp))
+        _fit_peaks(pf, specs, f"exp_{grid_point}", grid_point)
+
+        pf = PeakFitter(sc.sim[:, 0],
+                        unumpy.nominal_values(sc.uysim_scaled),
+                        unumpy.std_devs(sc.uysim_scaled))
+        _fit_peaks(pf, specs, f"sim_{grid_point}", grid_point)
+
+
+def _fit_peaks(pf, specs, key, grid_point):
+    specs[key] = {}
+    if isinstance(specs["E"], float):
+        popt, pcov = pf.fitGausBgStep(specs["pre_region"],
+                                      specs["post_region"])
+        print(popt)
+        print(pcov[0, 0])
+
+        specs[key]["area"] = ufloat(popt[0], np.sqrt(pcov[0, 0]))
+
+    elif len(specs["E"]) == 2:
+        popt, pcov = pf.fitDoubleGausBgStep(specs["pre_region"],
+                                            specs["post_region"],
+                                            p0_E=specs["E"])
+        specs[key]["area"] = [ufloat(popt[0], np.sqrt(pcov[0, 0])),
+                              ufloat(popt[3], np.sqrt(pcov[3, 3]))]
+    specs[key]["popt"] = popt
+    specs[key]["xfit"] = pf._xfit
+
+
+def add_peaks_plot(ax, fnisotope, fitpeaks, grid_point):
+    fitpeak = fitpeaks[fnisotope] if fitpeaks is not None else {}
+    for peak, specs in fitpeak.items():
+        for item in [f"exp_{grid_point}", f"sim_{grid_point}"]:
+            x = specs[item]["xfit"]
+            popt = specs[item]["popt"]
+            if isinstance(specs["E"], float):
+                ffit = PeakFitter.gaus_bg_step
+            elif len(specs["E"]) == 2:
+                ffit = PeakFitter.doublegaus_bg_step
+            ax.plot(x,
+                    ffit(x, *popt), "--", label=f"fit_{peak}_{item}")
+
+
+def compare_plain_counts(sc, manual_ratio, Elimits):
+    """ compares counts within Elimits directly """
+    ncounts_Elims = np.zeros((len(Elimits), 2))
+    for j, (E1, E2) in enumerate(Elimits):
+        ncounts_Elims[j, 0] = sc.get_area(sc.exp, E1, E2)
+        sim_scaled = np.c_[sc.xsim, unumpy.nominal_values(sc.uysim_scaled)]
+        ncounts_Elims[j, 1] = sc.get_area(sim_scaled, E1, E2)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
+    fig.suptitle(f"grid_point {grid_point}")
+    counts_exp = unumpy.uarray(ncounts_Elims[:, 0],
+                               np.sqrt(ncounts_Elims[:, 0]))
+    counts_sim = unumpy.uarray(ncounts_Elims[:, 1]/manual_ratio,
+                               np.sqrt(ncounts_Elims[:, 1])/manual_ratio)
+    counts_sim *= manual_ratio
+    counts_sim *= 5  # *5 due to binwidth
+    diff = (counts_exp-counts_sim)/counts_exp * 100
+    ax1.errorbar(Elimits.mean(axis=1), unumpy.nominal_values(counts_exp),
+                 yerr=unumpy.std_devs(counts_exp), fmt="o")
+    ax1.errorbar(Elimits.mean(axis=1), unumpy.nominal_values(counts_sim),
+                 yerr=unumpy.std_devs(counts_sim), fmt="x")
+    ax2.errorbar(Elimits.mean(axis=1), unumpy.nominal_values(diff),
+                 yerr=unumpy.std_devs(diff), fmt="x")
+
+    ax2.axhline(0, c="k", ls="--")
+    ax2.set_ylim(-20, 20)
+    return fig, (ax1, ax2)
+
+
+def difference_total(sc):
+    """ total differences between sim and exp in some area """
+    sim_scaled = np.c_[sc.xsim, unumpy.nominal_values(sc.uysim_scaled)]
+    tot_exp = sc.get_area(sc.exp, 100, 1300)
+    tot_sim = sc.get_area(sim_scaled, 100, 1300)
+    tot_sim *= 5  # 5 due to binwitdth
+    tot_diff = (tot_exp-tot_sim)/tot_exp * 100
+    print(f"Tot diff Elims1 [%]: {tot_diff:.2f}")
+
+    tot_exp = sc.get_area(sc.exp, 50, 200)
+    tot_sim = sc.get_area(sim_scaled, 50, 200)
+    tot_sim *= 5  # 5 due to binwitdth
+    tot_diff = (tot_exp-tot_sim)/tot_exp * 100
+    print(f"Tot diff Elims2 [%]: {tot_diff:.2f}")
+
+
+def ph_efficiency(x, p):
+    """ also from gf3 """
+    lneff_low = ln_pheff_per_region(x, p[0:3], Ec=100)
+    lneff_high = ln_pheff_per_region(x, p[3:6], Ec=1000)
+    inner = lneff_low**(-p[6]) + lneff_high**(-p[6])
+    return np.exp(inner**(-1/p[6]))
+
+
+def ph_efficiency_low(x, *p):
+    """ also from gf3 """
+    lneff_low = ln_pheff_per_region(x, *p, Ec=1)
+    return np.exp(lneff_low)
+
+def ph_efficiency_low_unumpy(x, *p):
+    """ also from gf3 """
+    lneff_low = ln_pheff_per_region(x, *p, Ec=1)
+    return unumpy.exp(lneff_low)
+
+
+def ln_pheff_per_region(x, p0, p1, p2, Ec=1):
+    """ p0 + p1 * (x/Ec) + p2 * (x/Ec)**2 on log log plot"""
+    logeff = p0 + p1*np.log(x/Ec) + p2*np.log(x/Ec)**2
+    return logeff
+
+
 if __name__ == "__main__":
     # fwhm_pars = np.array([73.2087, 0.50824, 9.62481e-05])
     # Frank June 2020
@@ -169,20 +258,36 @@ if __name__ == "__main__":
         "241Am": {"t": 969.774},
         "Bg": {"t":    1432.19, }}
 
+    for key, file in files.items():
+        try:
+            file["ndecays"] = ufloat(file["ndecays"], 0.03*file["ndecays"])
+        except KeyError:
+            continue
+
     ndecays_sim = 1e5
     diff_binwidth = 5
 
-    # dets with bet resolution (internat peak structure vissible)
+    # dets with better resolution (internat peak structure vissible)
     idets = [1, 2, 6, 8, 10, 11, 12,
              14, 15, 16, 17, 18, 19, 20, 21, 22,
              24, 25, 27, 29]
+    frac_dets = len(idets)/30
 
     # # 60Co
     Elimits = np.array([
                     [1110,  1230],
-                    [1270,  1350] # very short due to Bg subraction problem
+                    [1270,  1350]  # very short due to Bg subraction problem
                     ])
 
+    fitpeaks = {name: {} for name in files.keys()}
+    peak_energy = [1173.228, 1332.492]
+    peak_intensity = [.9985, .999826]
+    peak = {"E": peak_energy[0], "intensity": peak_intensity[0],
+            "pre_region": [1075, 1100], "post_region": [1240, 1270]}
+    fitpeaks["60Co"][int(peak["E"])] = peak
+    peak = {"E": peak_energy[1], "intensity": peak_intensity[1],
+            "pre_region": [1235, 1270], "post_region": [1400, 1470]}
+    fitpeaks["60Co"][int(peak["E"])] = peak
 
     fname_exp = "exp/60Co.txt"
     fname_bg = "exp/Bg.txt"
@@ -198,7 +303,8 @@ if __name__ == "__main__":
                  measure_time_exp, measure_time_bg, idets,
                  Efit_low, Efit_high,
                  do_plot=True, printout=True,
-                 manual_ratio=files["60Co"]["ndecays"]/ndecays_sim/diff_binwidth)
+                 manual_ratio=files["60Co"]["ndecays"].nominal_value/ndecays_sim/diff_binwidth,
+                 fitpeaks=fitpeaks)
 
     # df_all = df
 
@@ -212,6 +318,7 @@ if __name__ == "__main__":
     Ecompare_low = 50
     Ecompare_high = 1000
 
+    # for "direct" comparison of counts (no peakfitting...)
     Elimits = np.array([
                     [105,  130],
                     [220,  260],
@@ -226,53 +333,219 @@ if __name__ == "__main__":
                     [1170, 1240],
                     [1260, 1342]])
 
+    # Photo-efficiency fits
+    # Energy, intensity, pre_Elow, pre_Ehigh, post_Elow, post_Ehigh
+    peaks = np.array(
+        [[244.6974,  0.0755, 200 , 220 , 260 ,  280 ],   # noqa
+         [344.2785,  0.2659, 300 , 315 , 378 ,  391 ],   # noqa
+         [778.9045,  0.1293, 720 , 740 , 805 ,  830 ],   # noqa
+         [867.38  ,  0.0423, 815 , 830 , 900 ,  920 ],   # noqa
+         [964.057 ,  0.1451, 900 , 920 , 995 ,  1005],   # noqa
+         [1408.013,  0.2087, 1340, 1350, 1550,  1650]  # bad fit
+         ])  # noqa
+
+    def peak_dict_from_arr(arr):
+        peak = {"E": arr[0], "intensity": arr[1],
+                "pre_region": [arr[2], arr[3]],
+                "post_region": [arr[4], arr[5]]}
+        return peak
+
+    for i in range(len(peaks)):
+        peak = peak_dict_from_arr(peaks[i, :])
+        fitpeaks["152Eu"][int(peak["E"])] = peak
+
+    def doublepeak_dict_from_arr(arr):
+        peak = {"E": arr[:, 0], "intensity": arr[:, 1],
+                "pre_region": [arr[0, 2], arr[0, 3]],
+                "post_region": [arr[0, 4], arr[0, 5]]}
+        return peak
+
+    # # Energy, intensity, pre_Elow, pre_Ehigh, post_Elow, post_Ehigh
+    # dobulepeaks = np.array(
+    #     [[411.1165,  .02237, 380 , 390 , 460 ,  470 ],   # noqa
+    #      [443.9606,  .02827, np.nan, np.nan, np.nan, np.nan],   # noqa
+    #     ])  # noqa
+    # fitpeaks["152Eu"]["411_444_double"] = doublepeak_dict_from_arr(dobulepeaks)
+
     df = get_fom("152Eu",
                  fname_exp, fname_bg, fwhm_pars,
                  measure_time_exp, measure_time_bg, idets,
                  Efit_low, Efit_high,
                  do_plot=True, printout=True,
-                 manual_ratio=files["152Eu"]["ndecays"]/ndecays_sim/diff_binwidth)
-    df[df.grid_point.notnull()]
-    # df_all = df_all.merge(df, on="grid_point", how="outer")
-
-
-    # # 133Ba
-    # fname_exp = "exp/133Ba.txt"
-    # fname_bg = "exp/Bg.txt"
-    # measure_time_exp = files["133Ba"]["t"]  # //seconds
-    # measure_time_bg = files["Bg"]["t"]  # //seconds
-    # Efit_low = 285
-    # Efit_high = 320
-    # # Efit_low = 330
-    # # Efit_high = 400
-    # Ecompare_low = 50
-    # Ecompare_high = 300
-
-    # df = get_fom("133Ba",
-    #              fname_exp, fname_bg, fwhm_pars,
-    #              measure_time_exp, measure_time_bg, idets,
-    #              Efit_low, Efit_high,
-    #              do_plot=True, printout=False,
-    #              manual_ratio=files["133Ba"]["ndecays"]/ndecays_sim/diff_binwidth)
+                 manual_ratio=files["152Eu"]["ndecays"].nominal_value/ndecays_sim/diff_binwidth,
+                 fitpeaks=fitpeaks)
     # # df_all = df_all.merge(df, on="grid_point", how="outer")
 
-    # # # 137Cs
-    # fname_exp = "exp/137Cs.txt"
-    # fname_bg = "exp/Bg.txt"
-    # measure_time_exp = files["137Cs"]["t"]  # //seconds
-    # measure_time_bg = files["Bg"]["t"]  # //seconds
-    # Efit_low = 600
-    # Efit_high = 700
-    # Ecompare_low = 50
-    # Ecompare_high = 300
+    # 133Ba
+    fname_exp = "exp/133Ba.txt"
+    fname_bg = "exp/Bg.txt"
+    measure_time_exp = files["133Ba"]["t"]  # //seconds
+    measure_time_bg = files["Bg"]["t"]  # //seconds
+    Efit_low = 285
+    Efit_high = 320
+    # Efit_low = 330
+    # Efit_high = 400
+    Ecompare_low = 50
+    Ecompare_high = 300
 
-    # df = get_fom("137Cs",
-    #              fname_exp, fname_bg, fwhm_pars,
-    #              measure_time_exp, measure_time_bg, idets,
-    #              Efit_low, Efit_high,
-    #              do_plot=True, printout=False,
-    #              manual_ratio=files["137Cs"]["ndecays"]/ndecays_sim/diff_binwidth)
+    # # Energy, intensity, pre_Elow, pre_Ehigh, post_Elow, post_Ehigh
+    # dobulepeaks = np.array(
+    #     [[276.3989,  .0716, 245 , 255 , 320 ,  330],   # noqa
+    #      [302.8508,  .1834, np.nan, np.nan, np.nan, np.nan],   # noqa
+    #     ])  # noqa
+    # fitpeaks["133Ba"]["276_302_double"] = doublepeak_dict_from_arr(dobulepeaks)
 
+    # # Energy, intensity, pre_Elow, pre_Ehigh, post_Elow, post_Ehigh
+    # dobulepeaks = np.array(
+    #     [[356.0129, .6205, 320 , 330 , 410 ,  425],   # noqa
+    #      [383.8485, .0894, np.nan, np.nan, np.nan, np.nan],   # noqa
+    #     ])  # noqa
+    # fitpeaks["133Ba"]["276_302_double"] = doublepeak_dict_from_arr(dobulepeaks)
+
+
+    df = get_fom("133Ba",
+                 fname_exp, fname_bg, fwhm_pars,
+                 measure_time_exp, measure_time_bg, idets,
+                 Efit_low, Efit_high,
+                 do_plot=True, printout=False,
+                 manual_ratio=files["133Ba"]["ndecays"]/ndecays_sim/diff_binwidth,
+                 #fitpeaks=fitpeaks
+                 )
+    # # df_all = df_all.merge(df, on="grid_point", how="outer")
+
+    # # 137Cs
+    fname_exp = "exp/137Cs.txt"
+    fname_bg = "exp/Bg.txt"
+    measure_time_exp = files["137Cs"]["t"]  # //seconds
+    measure_time_bg = files["Bg"]["t"]  # //seconds
+    Efit_low = 600
+    Efit_high = 700
+    Ecompare_low = 50
+    Ecompare_high = 300
+
+    peak = {"E": 661.657, "intensity": .851,
+            "pre_region": [580, 615], "post_region": [705, 740]}
+    fitpeaks["137Cs"][int(peak["E"])] = peak
+
+    df = get_fom("137Cs",
+                 fname_exp, fname_bg, fwhm_pars,
+                 measure_time_exp, measure_time_bg, idets,
+                 Efit_low, Efit_high,
+                 do_plot=True, printout=True,
+                 manual_ratio=files["137Cs"]["ndecays"].nominal_value/ndecays_sim/diff_binwidth,
+                 fitpeaks=fitpeaks)
+
+
+    df = pd.read_csv('exp/labr_eff_fit_export.dat')
+    new_name = df.columns[0].split("# ")[1]
+    df = df.rename(columns={df.columns[0]: new_name})
+    grouped = df.groupby("Isotope")
+
+
+
+    for grid_point in [-10, -1, -2, -3]:
+        fig, ax = plt.subplots()
+        fig.suptitle(f"grid_point {grid_point}")
+
+        effs_exp = []
+        effs_sim = []
+        for name, group in grouped:
+            ax.errorbar(group["E"]+3, group["eff"], yerr=group["sigma_eff"],
+                        label=f"{name}_Frank_jitter", fmt="o", mfc="None",
+                        alpha=0.2)
+
+        for isotope, disotope in fitpeaks.items():
+            try:
+                ndecays = files[isotope]["ndecays"]
+            except KeyError:
+                continue
+            for i, (peak, values) in enumerate(disotope.items()):
+                try:
+                    print("before")
+                    val = values[f"exp_{grid_point}"]
+                    print("after")
+
+                    print(peak, values["E"])
+                    label = f"exp_{isotope}" if i == 0 else None
+                    if isinstance(values["E"], float):
+                        eff = val["area"]/values["intensity"] / ndecays / frac_dets
+
+                        disotope[peak]["eff_exp"] = eff
+                        ax.errorbar(values["E"], eff.nominal_value,
+                                    yerr=eff.std_dev,
+                                    c="r", label=label, fmt="<", mfc="None")
+
+                    elif len(values["E"]) == 2:
+                        eff = [area/intensity / ndecays / frac_dets
+                               for area, intensity in zip(val["area"],
+                                                          values["intensity"])]
+
+                        disotope[peak]["eff_exp"] = eff
+                        ax.errorbar(values["E"], [p.nominal_value for p in eff],
+                                    yerr=[p.std_dev for p in eff],
+                                    c="r", label=label, fmt="<", mfc="None")
+
+                    val = values[f"sim_{grid_point}"]
+
+                    label = f"sim_{isotope} (jittered)" if i == 0 else None
+                    if isinstance(values["E"], float):
+                        eff = val["area"]/values["intensity"] / ndecays / frac_dets
+
+                        disotope[peak]["eff_sim"] = eff
+                        ax.errorbar(values["E"]-2, eff.nominal_value,
+                                    yerr=eff.std_dev,
+                                    c="b", label=label, fmt=">", mfc="None")
+                    elif len(values["E"]) == 2:
+                        eff = [area/intensity / ndecays / frac_dets
+                               for area, intensity in zip(val["area"],
+                                                          values["intensity"])]
+
+                        disotope[peak]["sim_exp"] = eff
+                        ax.errorbar(values["E"]-2, [p.nominal_value for p in eff],
+                                    yerr=[p.std_dev for p in eff],
+                                    c="b", label=label, fmt=">",
+                                    mfc="None")
+                    effs_exp.append([values["E"], disotope[peak]["eff_exp"]])
+                    effs_sim.append([values["E"], disotope[peak]["eff_sim"]])
+                except KeyError:
+                    print("passing this:", grid_point, peak, values.keys())
+        ax.legend()
+        arr = np.array([[energy, y.nominal_value, y.std_dev]
+                        for (energy, y) in effs_exp])
+        arr = arr[arr[:, 0].argsort()]
+        x = arr[:, 0]
+        p0 = [60, 0.5, 2e-4]
+        popt, pcov = curve_fit(ph_efficiency_low, x, arr[:, 1], p0=p0,
+                               sigma=arr[:, 2])
+        print(f"popt exp gp{grid_point}:", popt)
+        x = np.linspace(200, 1500, num=100)
+
+        poptcorr = correlated_values(popt, pcov)
+        y = ph_efficiency_low_unumpy(x, *poptcorr)
+        nom = unumpy.nominal_values(y)
+        std = unumpy.std_devs(y)
+        ax.plot(x, nom, "k-")
+        ax.fill_between(x, nom-std, nom+std, color="k", alpha=0.2)
+
+        arr = np.array([[energy, y.nominal_value, y.std_dev]
+                        for (energy, y) in effs_sim])
+        arr = arr[arr[:, 0].argsort()]
+        x = arr[:, 0]
+        p0 = [60, 0.5, 2e-4]
+        popt, pcov = curve_fit(ph_efficiency_low, x, arr[:, 1], p0=p0,
+                               sigma=arr[:, 2])
+        print(f"popt sim gp{grid_point}:", popt)
+        x = np.linspace(200, 1500, num=100)
+
+        poptcorr = correlated_values(popt, pcov)
+        y = ph_efficiency_low_unumpy(x, *poptcorr)
+        nom = unumpy.nominal_values(y)
+        std = unumpy.std_devs(y)
+        ax.plot(x, nom, "b-")
+        ax.fill_between(x, nom-std, nom+std, color="b", alpha=0.2)
+        # plt.show()
+        fig.savefig(f"figs/photoeff_{grid_point}.png")
+    plt.show()
     # # df_all = df_all.merge(df, on="grid_point", how="outer")
 
     # now = datetime.now()
