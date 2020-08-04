@@ -267,7 +267,8 @@ class SpectrumComparison:
         self.rel_diff_smooth = rel_diff_smooth
         return rel_diff, rel_diff_smooth
 
-    def plots(self, xmax=None, ymin=1e2, ymax=1e6, title=None):
+    def plots(self, xmax=None, ymin=1.2e2, ymax=1e6, title=None,
+              plot_smoothed=True):
 
         xexp = self.xexp
 
@@ -278,15 +279,15 @@ class SpectrumComparison:
 
         # fig, (ax, ax2) = plt.subplots(2, 1, sharex=True,
         #                               gridspec_kw={'hspace': 0.0})
-        fig = plt.figure()
+        fig = plt.figure(figsize=[6.4, 3.5], dpi=200)
         ax = plt.subplot2grid((3, 1), (0, 0), rowspan=2)
         ax2 = plt.subplot2grid((3, 1), (2, 0), sharex=ax)
-        fig.subplots_adjust(hspace=0)
+        fig.subplots_adjust(hspace=0, bottom=0.145)
         plt.setp(ax.get_xticklabels(), visible=False)
 
-        ax.semilogy(xexp, self.exp[:, 1], label="exp")
+        ax.semilogy(xexp, self.exp[:, 1], label="exp.")
         ax.plot(self.xsim, unumpy.nominal_values(self.uysim_scaled),
-                label="sim, scaled")
+                label="sim., scaled")
 
         if "peak_fit" in self.xfit:
             xfit = self.xfit["peak_fit"]
@@ -297,8 +298,8 @@ class SpectrumComparison:
                     label="fit_to_sim")
         elif "area" in self.xfit:
             E1, E2 = self.xfit["area"]
-            ax.axvline(E1, c="k", ls="--", label="scale_to_exp")
-            ax.axvline(E2, c="k", ls="--")
+            ax.axvspan(E1, E2, color="k", alpha=0.2, lw=0,
+                       label="scaling area")
         elif "ratio" in self.xfit:
             pass
 
@@ -307,8 +308,10 @@ class SpectrumComparison:
         y0 = self.rel_diff
         yerr = self.rel_diff_err
         ax2.fill_between(xexp, y0 - yerr, y0 + yerr, alpha=0.5)
-        ax2.plot(xexp, y0, label="difference")
-        ax2.plot(xexp, self.rel_diff_smooth, "--", alpha=0.8, label="smoothed")
+        ax2.plot(xexp, y0, label="(exp.-sim.)/exp.")
+        if plot_smoothed:
+            ax2.plot(xexp, self.rel_diff_smooth, "--", alpha=0.8,
+                     label="smoothed")
 
         ax2.axhline(y=0, color="r")
         # ax2.set_yscale('symlog')
@@ -316,7 +319,7 @@ class SpectrumComparison:
 
         ax.set_yscale("log")
         ax.set_xlabel("Energy [keV]")
-        ax.set_ylabel("counts/bin")
+        ax.set_ylabel("counts / bin")
         ax.legend(loc="best")
         ax.set_xlim(0, xmax)
         ax.set_ylim(ymin, ymax)

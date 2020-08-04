@@ -52,7 +52,8 @@ def get_fom(fnamesim,
             bg_ratio,
             Efit_low, Efit_high,
             do_plot=True, printout=False,
-            manual_ratio=None, xmax_plot=1400):
+            manual_ratio=None, xmax_plot=1400,
+            ymin=1.2e3, ymax=1e7):
     """ get figure of merrit
 
     fnamesim: str, like "60Co", or "152Eu", "1777keV"
@@ -93,11 +94,11 @@ def get_fom(fnamesim,
         grid_points[i] = int(re.search(r"grid_(-*\d*)_", fname_sim)[1])
 
         if do_plot:
-            fig, (ax1, ax2) = sc.plots(title=fname_sim, xmax=xmax_plot)
-
-        ax1.set_ylim(1e3, 1e8)
+            fig, (ax1, ax2) = sc.plots(title=fname_sim, xmax=xmax_plot,
+                                       plot_smoothed=False)
+        ax1.set_ylim(ymin, ymax)
         fig.savefig(f"figs_inbeam/{fnamesim}_{grid_points[i]:.0f}.png")
-        plt.show()
+        # plt.show()
         plt.close(fig)
 
 
@@ -166,51 +167,52 @@ if __name__ == "__main__":
     #         do_plot=True, printout=True)
 
 
-    # # 28Si -- Ex = 1.7 KeV
-    # fname_exp = "exp/inbeam/si-run1/28si/alfna.m"
-    # fname_bg = "exp/inbeam/si-run1/28si/alfna_bg.m"
-    # Efit_low = 1779-80
-    # Efit_high = 1779+35
-    # Ecompare_low = 50
-    # Ecompare_high = 1000
-    # bg_ratio = 0
+    # 28Si -- Ex = 1.7 KeV
+    fname_exp = "exp/inbeam/si-run1/28si/alfna.m"
+    fname_bg = "exp/inbeam/si-run1/28si/alfna_bg.m"
+    Efit_low = 1779-80
+    Efit_high = 1779+35
+    Ecompare_low = 50
+    Ecompare_high = 1000
+    bg_ratio = 0
 
-    # exp = arr_from_py(fname_exp, 1600-40, 1600+40, remove_negative=True)
-    # bg = arr_from_py(fname_bg, 1600-40, 1600+40, remove_negative=True)
-    # # exp = arr_from_py(fname_exp, 1516, 1575, remove_negative=True)
-    # # bg = arr_from_py(fname_bg,   1516, 1575, remove_negative=True)
-    # # exp = arr_from_py(fname_exp, 1575, 1625, remove_negative=True)
-    # # bg = arr_from_py(fname_bg,   1575, 1625, remove_negative=True)
+    exp = arr_from_py(fname_exp, 1600-40, 1600+40, remove_negative=True)
+    bg = arr_from_py(fname_bg, 1600-40, 1600+40, remove_negative=True)
+    # exp = arr_from_py(fname_exp, 1516, 1575, remove_negative=True)
+    # bg = arr_from_py(fname_bg,   1516, 1575, remove_negative=True)
+    # exp = arr_from_py(fname_exp, 1575, 1625, remove_negative=True)
+    # bg = arr_from_py(fname_bg,   1575, 1625, remove_negative=True)
 
-    # # small recalibration
-    # exp[:, 0] -= 2
-    # bg[:, 0] -= 2
+    # small recalibration
+    exp[:, 0] -= 2
+    bg[:, 0] -= 2
 
-    # # test
-    # # bg[0, 1] /= 0
+    # test
+    # bg[0, 1] /= 0
 
-    # # fig, ax = plt.subplots()
-    # # ax.plot(exp[:, 0], exp[:, 1], label="exp")
-    # # ax.plot(bg[:, 0], bg[:, 1], label="bg")
+    # fig, ax = plt.subplots()
+    # ax.plot(exp[:, 0], exp[:, 1], label="exp")
+    # ax.plot(bg[:, 0], bg[:, 1], label="bg")
 
-    # # fig, ax = plt.subplots()
-    # # ax.plot(exp[:, 0], exp[:, 1], label="exp")
-    # # ax.plot(bg[:, 0], bg[:, 1], label="bg")
+    # fig, ax = plt.subplots()
+    # ax.plot(exp[:, 0], exp[:, 1], label="exp")
+    # ax.plot(bg[:, 0], bg[:, 1], label="bg")
 
-    # # exp = arr_from_py(fname_exp, 1700-100, 1700+100, remove_negative=True)
-    # # ax.plot(exp[:, 0], exp[:, 1], label="exp2")
+    # exp = arr_from_py(fname_exp, 1700-100, 1700+100, remove_negative=True)
+    # ax.plot(exp[:, 0], exp[:, 1], label="exp2")
 
-    # # exp = arr_from_py(fname_exp, 1700-150, 1700+150, remove_negative=True)
-    # # ax.plot(exp[:, 0], exp[:, 1], label="exp3")
+    # exp = arr_from_py(fname_exp, 1700-150, 1700+150, remove_negative=True)
+    # ax.plot(exp[:, 0], exp[:, 1], label="exp3")
 
-    # # ax.set_yscale("log")
-    # # ax.legend()
+    # ax.set_yscale("log")
+    # ax.legend()
     # plt.show()
 
-    # get_fom("1779",
-    #         exp, bg, fwhm_pars, bg_ratio,
-    #         Efit_low, Efit_high,
-    #         do_plot=True, printout=True, xmax_plot=3000)
+    get_fom("1779",
+            exp, bg, fwhm_pars, bg_ratio,
+            Efit_low, Efit_high,
+            do_plot=True, printout=True, xmax_plot=2200,
+            ymin=1.2e2, ymax=1e5)
 
     """
     # 28Si -- Ex = ~4.6 KeV
