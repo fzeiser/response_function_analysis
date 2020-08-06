@@ -307,27 +307,28 @@ class SpectrumComparison:
         # yerr = unumpy.std_devs(self.rel_diff)
         y0 = self.rel_diff
         yerr = self.rel_diff_err
-        ax2.fill_between(xexp, y0 - yerr, y0 + yerr, alpha=0.5)
-        ax2.plot(xexp, y0, label="(exp.-sim.)/exp.")
+        ax2.fill_between(xexp, y0 - yerr, y0 + yerr, color="k", alpha=0.5)
+        ax2.plot(xexp, y0, c="k")
         if plot_smoothed:
-            ax2.plot(xexp, self.rel_diff_smooth, "--", alpha=0.8,
+            ax2.plot(xexp, self.rel_diff_smooth, "C5--", alpha=0.8,
                      label="smoothed")
 
-        ax2.axhline(y=0, color="r")
+        ax2.axhline(y=0, color="r", lw=1)
         # ax2.set_yscale('symlog')
         # ax2.set_xlim(0, 1400)
 
         ax.set_yscale("log")
         ax.set_xlabel("Energy [keV]")
         ax.set_ylabel("counts / bin")
-        ax.legend(loc="best")
+        # ax.legend(loc="best")
         ax.set_xlim(0, xmax)
         ax.set_ylim(ymin, ymax)
 
-        ax2.legend(loc="best")
+        # ax2.legend(loc="best")
         ax2.set_ylim(-18, 18)
         ax2.set_xlabel("Energy [keV]")
-        ax2.set_ylabel("rel. diff in %")
+        ax2.set_ylabel(r"$\frac{\mathrm{exp.}-\mathrm{sim.}}"
+                       "{\mathrm{exp.}} [\%]$")
 
         ax2.tick_params(labelbottom='on', top='on')
 

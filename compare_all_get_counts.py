@@ -6,6 +6,7 @@ import os
 import re
 from tqdm import tqdm
 from datetime import datetime
+import pandas as pd
 
 from uncertainties import unumpy, ufloat, correlated_values
 import sys
@@ -43,13 +44,14 @@ def save_coords_from_click(fig, fname="coords.txt"):
     return coords
 
 
+
 def get_fom(fnisotope,
             fname_exp, fname_bg, fwhm_pars,
             measure_time_exp, measure_time_bg, idets,
             Efit_low, Efit_high,
             do_plot=True, printout=False,
             manual_ratio=None, fitpeaks=None,
-            xmax=1600):
+            xmax=1600, figtext=None):
     """ get figure of merrit
 
     fnisotope: str, like "60Co", or "152Eu"
@@ -92,7 +94,17 @@ def get_fom(fnisotope,
         foms[i, :] = sc.fom(Ecompare_low, Ecompare_high, printout=False)
 
         if do_plot:
-            fig, (ax1, ax2) = sc.plots(title=fname_sim, xmax=xmax)
+            fig, (ax1, ax2) = sc.plots(title=fname_sim, xmax=xmax,
+                                       plot_smoothed=False)
+
+            ax1.text(0.5, 0.9, figtext, horizontalalignment='center',
+                     verticalalignment='center', transform=ax1.transAxes,
+                     fontsize="large")
+
+            fig.savefig(f"figs/{fnisotope}_{grid_point:.0f}_noleg.png")
+
+            ax1.legend(loc="best")
+            # ax2.legend(loc="best")
 
             fig.savefig(f"figs/{fnisotope}_{grid_point:.0f}.png")
 
@@ -306,7 +318,8 @@ if __name__ == "__main__":
                  do_plot=True, printout=True,
                  manual_ratio=files["60Co"]["ndecays"].nominal_value/ndecays_sim/diff_binwidth,
                  fitpeaks=fitpeaks,
-                 xmax=1500)
+                 xmax=1500,
+                 figtext=r"$^{60}$Co")
 
     # df_all = df
 
@@ -376,7 +389,8 @@ if __name__ == "__main__":
                  do_plot=True, printout=True,
                  manual_ratio=files["152Eu"]["ndecays"].nominal_value/ndecays_sim/diff_binwidth,
                  fitpeaks=fitpeaks,
-                 xmax=1600)
+                 xmax=1600,
+                 figtext=r"$^{152}$Eu")
     # # df_all = df_all.merge(df, on="grid_point", how="outer")
 
     # 133Ba
@@ -412,7 +426,8 @@ if __name__ == "__main__":
                  Efit_low, Efit_high,
                  do_plot=True, printout=False,
                  manual_ratio=files["133Ba"]["ndecays"]/ndecays_sim/diff_binwidth,
-                 xmax=460
+                 xmax=460,
+                 figtext=r"$^{133}$Ba"
                  #fitpeaks=fitpeaks
                  )
     # # df_all = df_all.merge(df, on="grid_point", how="outer")
@@ -438,7 +453,8 @@ if __name__ == "__main__":
                  do_plot=True, printout=True,
                  manual_ratio=files["137Cs"]["ndecays"].nominal_value/ndecays_sim/diff_binwidth,
                  fitpeaks=fitpeaks,
-                 xmax=800)
+                 xmax=800,
+                 figtext=r"$^{137}$Cs")
 
 
     df = pd.read_csv('exp/labr_eff_fit_export.dat')
@@ -536,7 +552,7 @@ if __name__ == "__main__":
               tabulate(np.c_[[r"$p_0$", r"$p_1$", r"$p_2$"], pcov],
                        tablefmt="latex_booktabs", floatfmt=".1e",
                        headers=[r"$p_0$", r"$p_1$", r"$p_2$"]))
-        x = np.linspace(200, 1500, num=100)
+        x = np.linspace(200, 15e2, num=100)
 
         poptcorr = correlated_values(popt, pcov)
         print(f"popt exp gp: {poptcorr}")
@@ -559,7 +575,7 @@ if __name__ == "__main__":
               tabulate(np.c_[[r"$p_0$", r"$p_1$", r"$p_2$"], pcov],
                        tablefmt="latex_booktabs", floatfmt=".1e",
                        headers=[r"$p_0$", r"$p_1$", r"$p_2$"]))
-        x = np.linspace(200, 1500, num=100)
+        x = np.linspace(200, 15e2, num=100)
 
         poptcorr = correlated_values(popt, pcov)
         print(f"popt sim gp: {poptcorr}")
@@ -570,8 +586,13 @@ if __name__ == "__main__":
         ax.fill_between(x, nom-std, nom+std, color="C1", alpha=0.15,
                         label=r"fit to $\epsilon_\mathrm{ph, sim}$.")
         # plt.show()
-        ax.legend()
 
+        # # photopeak eff from geant (direct, not fitted)
+        # df = pd.read_csv("response/efficiencies.csv")
+        # df.plot(ax=ax, x="E", y="fe", label="geant4", color="k",
+        #         linestyle="--")
+
+        ax.legend()
         ax.set_xlabel("Energy [keV]")
         ax.set_ylabel(r"Photopeak efficiency $\epsilon_\mathrm{ph}$")
         fig.savefig(f"figs/photoeff_{grid_point}.png")

@@ -97,6 +97,8 @@ def get_fom(fnamesim,
             fig, (ax1, ax2) = sc.plots(title=fname_sim, xmax=xmax_plot,
                                        plot_smoothed=False)
         ax1.set_ylim(ymin, ymax)
+        fig.savefig(f"figs_inbeam/{fnamesim}_{grid_points[i]:.0f}_noleg.png")
+        ax1.legend()
         fig.savefig(f"figs_inbeam/{fnamesim}_{grid_points[i]:.0f}.png")
         # plt.show()
         plt.close(fig)
