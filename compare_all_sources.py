@@ -58,7 +58,8 @@ def get_fom(fnisotope,
     """
     fname_sims = []
     for file in os.listdir('mama_spectra/root_files'):
-        if fnmatch.fnmatch(file, f'*{fnisotope}*_all.m'):
+        if fnmatch.fnmatch(file, f'grid_-5_*{fnisotope}*_all.m'):
+            print("machting:", file)
             fname_sims.append(os.path.join("mama_spectra/root_files", file))
     fname_sims.sort()
     grid_points = np.full_like(fname_sims, np.nan, dtype=float)
@@ -253,6 +254,133 @@ def ln_pheff_per_region(x, p0, p1, p2, Ec=1):
     logeff = p0 + p1*np.log(x/Ec) + p2*np.log(x/Ec)**2
     return logeff
 
+def plot_photoeff(fitpeaks, grid_point, xmax=1500):
+    fmt_list = ["<", ">", "^", "o", "x", "+", "."]
+    fig, ax = plt.subplots(dpi=200)
+    fig.suptitle(f"grid_point {grid_point}")
+
+    effs_exp = []
+    effs_sim = []
+    # for name, group in grouped:
+    #     ax.errorbar(group["E"]+3, group["eff"], yerr=group["sigma_eff"],
+    #                 label=f"{name}_Frank_jitter", fmt="o", mfc="None",
+    #                 alpha=0.2)
+
+    for i_isotope, (isotope, disotope) in enumerate(fitpeaks.items()):
+        try:
+            ndecays = files[isotope]["ndecays"]
+        except KeyError:
+            continue
+        if i_isotope < len(fmt_list):
+            fmt = fmt_list[i_isotope]
+        else:
+            fmt = fmt_list[len(fmt_list)%i_isotope]
+
+        for i, (peak, values) in enumerate(disotope.items()):
+            try:
+                print("before")
+                val = values[f"exp_{grid_point}"]
+                print("after")
+
+                print(peak, values["E"])
+                label = f"{isotope}" if i == 0 else None
+                if isinstance(values["E"], float):
+                    eff = val["area"]/values["intensity"] / ndecays / frac_dets
+
+                    disotope[peak]["eff_exp"] = eff
+                    ax.errorbar(values["E"], eff.nominal_value,
+                                yerr=eff.std_dev,
+                                c="C0", label=label, fmt=fmt, mfc="None")
+
+                elif len(values["E"]) == 2:
+                    eff = [area/intensity / ndecays / frac_dets
+                           for area, intensity in zip(val["area"],
+                                                      values["intensity"])]
+
+                    disotope[peak]["eff_exp"] = eff
+                    ax.errorbar(values["E"],
+                                [p.nominal_value for p in eff],
+                                yerr=[p.std_dev for p in eff],
+                                c="C0", label=label, fmt=fmt, mfc="None")
+
+                val = values[f"sim_{grid_point}"]
+
+                # label = f"sim_{isotope}" if i == 0 else None
+                label=None
+                if isinstance(values["E"], float):
+                    eff = (val["area"]/values["intensity"] / ndecays
+                           / frac_dets)
+
+                    disotope[peak]["eff_sim"] = eff
+                    ax.errorbar(values["E"], eff.nominal_value,
+                                yerr=eff.std_dev,
+                                c="C1", label=label, fmt=fmt, mfc="None")
+                elif len(values["E"]) == 2:
+                    eff = [area/intensity / ndecays / frac_dets
+                           for area, intensity in zip(val["area"],
+                                                      values["intensity"])]
+
+                    disotope[peak]["sim_exp"] = eff
+                    ax.errorbar(values["E"],
+                                [p.nominal_value for p in eff],
+                                yerr=[p.std_dev for p in eff],
+                                c="C1", label=label, fmt=fmt,
+                                mfc="None")
+                effs_exp.append([values["E"], disotope[peak]["eff_exp"]])
+                effs_sim.append([values["E"], disotope[peak]["eff_sim"]])
+            except KeyError:
+                print("passing this:", grid_point, peak, values.keys())
+
+    arr = np.array([[energy, y.nominal_value, y.std_dev]
+                    for (energy, y) in effs_exp])
+    arr = arr[arr[:, 0].argsort()]
+    x = arr[:, 0]
+    p0 = [60, 0.5, 2e-4]
+    popt, pcov = curve_fit(ph_efficiency_low, x, arr[:, 1], p0=p0,
+                           sigma=arr[:, 2])
+    print(f"popt exp gp{grid_point}:", popt)
+    print(f"pcov exp gp{grid_point}:\n",
+          tabulate(np.c_[[r"$p_0$", r"$p_1$", r"$p_2$"], pcov],
+                   tablefmt="latex_booktabs", floatfmt=".1e",
+                   headers=[r"$p_0$", r"$p_1$", r"$p_2$"]))
+    x = np.linspace(200, xmax, num=100)
+
+    poptcorr = correlated_values(popt, pcov)
+    print(f"popt exp gp: {poptcorr}")
+    y = ph_efficiency_low_unumpy(x, *poptcorr)
+    nom = unumpy.nominal_values(y)
+    std = unumpy.std_devs(y)
+    ax.plot(x, nom, "C0-", alpha=0.7)
+    ax.fill_between(x, nom-std, nom+std, color="C0", alpha=0.15,
+                    label=r"fit to $\epsilon_\mathrm{fe, exp}$")
+
+    arr = np.array([[energy, y.nominal_value, y.std_dev]
+                    for (energy, y) in effs_sim])
+    arr = arr[arr[:, 0].argsort()]
+    x = arr[:, 0]
+    p0 = [60, 0.5, 2e-4]
+    popt, pcov = curve_fit(ph_efficiency_low, x, arr[:, 1], p0=p0,
+                           sigma=arr[:, 2])
+    print(f"popt sim gp{grid_point}:", popt)
+    print(f"pcov sim gp{grid_point}:\n",
+          tabulate(np.c_[[r"$p_0$", r"$p_1$", r"$p_2$"], pcov],
+                   tablefmt="latex_booktabs", floatfmt=".1e",
+                   headers=[r"$p_0$", r"$p_1$", r"$p_2$"]))
+    x = np.linspace(200, xmax, num=100)
+
+    poptcorr = correlated_values(popt, pcov)
+    print(f"popt sim gp: {poptcorr}")
+    y = ph_efficiency_low_unumpy(x, *poptcorr)
+    nom = unumpy.nominal_values(y)
+    std = unumpy.std_devs(y)
+    ax.plot(x, nom, "C1-", alpha=0.7)
+    ax.fill_between(x, nom-std, nom+std, color="C1", alpha=0.15,
+                    label=r"fit to $\epsilon_\mathrm{fe, sim}$")
+
+    ax.legend()
+    ax.set_xlabel("Energy [keV]")
+    ax.set_ylabel(r"Full-energy peak efficiency $\epsilon_\mathrm{fe}$")
+    return fig, ax
 
 if __name__ == "__main__":
     # fwhm_pars = np.array([73.2087, 0.50824, 9.62481e-05])
@@ -456,146 +584,54 @@ if __name__ == "__main__":
                  xmax=800,
                  figtext=r"$^{137}$Cs")
 
-
     df = pd.read_csv('exp/labr_eff_fit_export.dat')
     new_name = df.columns[0].split("# ")[1]
     df = df.rename(columns={df.columns[0]: new_name})
     grouped = df.groupby("Isotope")
 
+    for grid_point in [-5]:
+        fig, ax = plot_photoeff(fitpeaks, grid_point)
+        fig.savefig(f"figs/photoeff_{grid_point}.png")
 
-    fmt_list = ["<", ">", "^", "o", "x", "+", "."]
-    for grid_point in [-10, -1, -2, -3, -4, -5]:
-        fig, ax = plt.subplots(dpi=200)
-        fig.suptitle(f"grid_point {grid_point}")
+    for grid_point in [-5]:
+        fig, ax = plot_photoeff(fitpeaks, grid_point, xmax=15e3)
 
-        effs_exp = []
-        effs_sim = []
-        # for name, group in grouped:
-        #     ax.errorbar(group["E"]+3, group["eff"], yerr=group["sigma_eff"],
-        #                 label=f"{name}_Frank_jitter", fmt="o", mfc="None",
-        #                 alpha=0.2)
+        # photopeak eff from geant (direct, not fitted)
+        df = pd.read_csv("response/efficiencies.csv")
+        df.plot(ax=ax, x="E", y="fe", label="geant4", color="k",
+                linestyle="--")
 
-        for i_isotope, (isotope, disotope) in enumerate(fitpeaks.items()):
-            try:
-                ndecays = files[isotope]["ndecays"]
-            except KeyError:
-                continue
-            if i_isotope < len(fmt_list):
-                fmt = fmt_list[i_isotope]
-            else:
-                fmt = fmt_list[len(fmt_list)%i_isotope]
+        # Fits from Wanja, 6 Aug 2020'
+        # 12C
+        eff = {"E": [1778.969, 2838.29, 3200.7],
+               "eff": [0.13462, 0.11538, 0.1053],
+               "dE": [0.011, 0.15, 0.5],
+               "deff": [0.13462*0.135, 0.11538*0.135, 0.1053*0.135]}
+        ax.errorbar(x=eff["E"], xerr=eff["dE"], y=eff["eff"], yerr=eff["deff"],
+                    label="28Si, Wanja", fmt="C3o")
+        ax.errorbar(x=4439.82, xerr=0.21, y=0.08262, yerr=0.08262*0.135,
+                    label="12C, Wanja", fmt="C4o")
 
-            for i, (peak, values) in enumerate(disotope.items()):
-                try:
-                    print("before")
-                    val = values[f"exp_{grid_point}"]
-                    print("after")
-
-                    print(peak, values["E"])
-                    label = f"{isotope}" if i == 0 else None
-                    if isinstance(values["E"], float):
-                        eff = val["area"]/values["intensity"] / ndecays / frac_dets
-
-                        disotope[peak]["eff_exp"] = eff
-                        ax.errorbar(values["E"], eff.nominal_value,
-                                    yerr=eff.std_dev,
-                                    c="C0", label=label, fmt=fmt, mfc="None")
-
-                    elif len(values["E"]) == 2:
-                        eff = [area/intensity / ndecays / frac_dets
-                               for area, intensity in zip(val["area"],
-                                                          values["intensity"])]
-
-                        disotope[peak]["eff_exp"] = eff
-                        ax.errorbar(values["E"],
-                                    [p.nominal_value for p in eff],
-                                    yerr=[p.std_dev for p in eff],
-                                    c="C0", label=label, fmt=fmt, mfc="None")
-
-                    val = values[f"sim_{grid_point}"]
-
-                    # label = f"sim_{isotope}" if i == 0 else None
-                    label=None
-                    if isinstance(values["E"], float):
-                        eff = (val["area"]/values["intensity"] / ndecays
-                               / frac_dets)
-
-                        disotope[peak]["eff_sim"] = eff
-                        ax.errorbar(values["E"], eff.nominal_value,
-                                    yerr=eff.std_dev,
-                                    c="C1", label=label, fmt=fmt, mfc="None")
-                    elif len(values["E"]) == 2:
-                        eff = [area/intensity / ndecays / frac_dets
-                               for area, intensity in zip(val["area"],
-                                                          values["intensity"])]
-
-                        disotope[peak]["sim_exp"] = eff
-                        ax.errorbar(values["E"],
-                                    [p.nominal_value for p in eff],
-                                    yerr=[p.std_dev for p in eff],
-                                    c="C1", label=label, fmt=fmt,
-                                    mfc="None")
-                    effs_exp.append([values["E"], disotope[peak]["eff_exp"]])
-                    effs_sim.append([values["E"], disotope[peak]["eff_sim"]])
-                except KeyError:
-                    print("passing this:", grid_point, peak, values.keys())
-
-        arr = np.array([[energy, y.nominal_value, y.std_dev]
-                        for (energy, y) in effs_exp])
-        arr = arr[arr[:, 0].argsort()]
-        x = arr[:, 0]
-        p0 = [60, 0.5, 2e-4]
-        popt, pcov = curve_fit(ph_efficiency_low, x, arr[:, 1], p0=p0,
-                               sigma=arr[:, 2])
-        print(f"popt exp gp{grid_point}:", popt)
-        print(f"pcov exp gp{grid_point}:\n",
-              tabulate(np.c_[[r"$p_0$", r"$p_1$", r"$p_2$"], pcov],
-                       tablefmt="latex_booktabs", floatfmt=".1e",
-                       headers=[r"$p_0$", r"$p_1$", r"$p_2$"]))
-        x = np.linspace(200, 15e2, num=100)
-
+        # Franks fits
+        popt = [-0.29138, -0.0283581, -0.0271264]
+        pcov = [[0.0135246, -0.00290798, 0.000121002, ],
+                [-0.00290798, 0.000922994, -7.2436e-05, ],
+                [0.000121002, -7.2436e-05, 8.42127e-06, ]]
         poptcorr = correlated_values(popt, pcov)
-        print(f"popt exp gp: {poptcorr}")
+        x = np.linspace(200, 15e3, num=100)
         y = ph_efficiency_low_unumpy(x, *poptcorr)
         nom = unumpy.nominal_values(y)
         std = unumpy.std_devs(y)
-        ax.plot(x, nom, "C0-", alpha=0.7)
-        ax.fill_between(x, nom-std, nom+std, color="C0", alpha=0.15,
-                        label=r"fit to $\epsilon_\mathrm{ph, exp}$.")
-
-        arr = np.array([[energy, y.nominal_value, y.std_dev]
-                        for (energy, y) in effs_sim])
-        arr = arr[arr[:, 0].argsort()]
-        x = arr[:, 0]
-        p0 = [60, 0.5, 2e-4]
-        popt, pcov = curve_fit(ph_efficiency_low, x, arr[:, 1], p0=p0,
-                               sigma=arr[:, 2])
-        print(f"popt sim gp{grid_point}:", popt)
-        print(f"pcov sim gp{grid_point}:\n",
-              tabulate(np.c_[[r"$p_0$", r"$p_1$", r"$p_2$"], pcov],
-                       tablefmt="latex_booktabs", floatfmt=".1e",
-                       headers=[r"$p_0$", r"$p_1$", r"$p_2$"]))
-        x = np.linspace(200, 15e2, num=100)
-
-        poptcorr = correlated_values(popt, pcov)
-        print(f"popt sim gp: {poptcorr}")
-        y = ph_efficiency_low_unumpy(x, *poptcorr)
-        nom = unumpy.nominal_values(y)
-        std = unumpy.std_devs(y)
-        ax.plot(x, nom, "C1-", alpha=0.7)
-        ax.fill_between(x, nom-std, nom+std, color="C1", alpha=0.15,
-                        label=r"fit to $\epsilon_\mathrm{ph, sim}$.")
-        # plt.show()
-
-        # # photopeak eff from geant (direct, not fitted)
-        # df = pd.read_csv("response/efficiencies.csv")
-        # df.plot(ax=ax, x="E", y="fe", label="geant4", color="k",
-        #         linestyle="--")
+        ax.plot(x, nom, "C4-", alpha=0.7)
+        ax.fill_between(x, nom-std, nom+std, color="C4", alpha=0.15,
+                        label=r"Frank's fit to $\epsilon_\mathrm{fe, exp}$")
 
         ax.legend()
-        ax.set_xlabel("Energy [keV]")
-        ax.set_ylabel(r"Photopeak efficiency $\epsilon_\mathrm{ph}$")
-        fig.savefig(f"figs/photoeff_{grid_point}.png")
+        fig.savefig(f"figs/photoeff_{grid_point}_wtih_geant.png")
+        ax.set_xlim(None, 5e3)
+        ax.set_ylim(None, 0.32)
+        fig.savefig(f"figs/photoeff_{grid_point}_wtih_geant_zoom.png")
+
     plt.show()
     # # df_all = df_all.merge(df, on="grid_point", how="outer")
 

@@ -307,8 +307,8 @@ class SpectrumComparison:
         # yerr = unumpy.std_devs(self.rel_diff)
         y0 = self.rel_diff
         yerr = self.rel_diff_err
-        ax2.fill_between(xexp, y0 - yerr, y0 + yerr, color="k", alpha=0.5)
-        ax2.plot(xexp, y0, c="k")
+        ax2.fill_between(xexp, y0 - yerr, y0 + yerr, color="k", alpha=0.2)
+        ax2.plot(xexp, y0, c="k", alpha=0.6)
         if plot_smoothed:
             ax2.plot(xexp, self.rel_diff_smooth, "C5--", alpha=0.8,
                      label="smoothed")
